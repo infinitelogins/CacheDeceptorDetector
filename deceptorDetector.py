@@ -13,6 +13,7 @@ from java.text import SimpleDateFormat
 from java.util import Date, Comparator
 from javax.swing import JTextArea
 from javax.swing import SwingUtilities
+from java.awt import BorderLayout, GridLayout, FlowLayout
 
 
 class IntegerComparator(Comparator):
@@ -58,8 +59,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
 
 
     def initUI(self):
-        self.panel = JPanel()
-        self.panel.setLayout(BoxLayout(self.panel, BoxLayout.Y_AXIS))
+        self.panel = JPanel(GridLayout(2, 1))
 
         # JTextArea for keywords
         keywordsTitleLabel = JLabel("Keywords being searched:")
@@ -83,33 +83,52 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         scrollPane.setPreferredSize(java.awt.Dimension(700, 200))
 
         # Other UI components
-        label = JLabel("Enter custom keywords (comma-separated, prefix with '-' to remove):")
+        customKeyLabel = JLabel("Enter custom keywords (comma-separated, prefix with '-' to remove):")
         self.textField = JTextField(20)
         updateButton = JButton('Update', actionPerformed=self.updateKeywords)
         clearButton = JButton('Clear', actionPerformed=self.clearTable)
         markAsTestedButton = JButton('Mark as Tested', actionPerformed=self.onMarkAsTested)
-
-
+        buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
+        buttonPanel.add(updateButton)
+        buttonPanel.add(clearButton)
+        buttonPanel.add(markAsTestedButton)
+    
         # Request/Response Viewer
         self.requestViewer = self._callbacks.createMessageEditor(self, False)
         self.responseViewer = self._callbacks.createMessageEditor(self, False)
+
+        # Set minimum sizes
+        self.requestViewer.getComponent().setMinimumSize(java.awt.Dimension(350, 150))
+        self.responseViewer.getComponent().setMinimumSize(java.awt.Dimension(350, 150))
+
         viewerSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, self.requestViewer.getComponent(), self.responseViewer.getComponent())
         viewerSplitPane.setResizeWeight(0.5)
+
+        # Add the split pane to the parent container
         viewerSplitPane.setPreferredSize(java.awt.Dimension(700, 300))
+        keywordsPanel = JPanel(GridLayout(1, 2))
+        keywordsLeftPanel = JPanel()
+        keywordsLeftPanel.setLayout(BoxLayout(keywordsLeftPanel, BoxLayout.Y_AXIS))
+
+        keywordsLeftPanel.add(keywordsTitleLabel)
+        keywordsLeftPanel.add(keywordsScrollPane)
+        keywordsRightPanel = JPanel()
+        keywordsRightPanel.setLayout(BoxLayout(keywordsRightPanel, BoxLayout.Y_AXIS))
+
+        keywordsRightPanel.add(customKeyLabel)
+        keywordsRightPanel.add(self.textField)
+        keywordsRightPanel.add(buttonPanel)
+        keywordsPanel.add(keywordsLeftPanel)
+        keywordsPanel.add(keywordsRightPanel)
 
         # Adding components to the panel
-        topPanel = JPanel()
-        topPanel.add(label)
-        topPanel.add(self.textField)
-        topPanel.add(updateButton)
-        topPanel.add(clearButton)
-        topPanel.add(markAsTestedButton)
-        self.panel.add(keywordsTitleLabel)
-        self.panel.add(keywordsScrollPane)  # Add keywords scroll pane
-        self.panel.add(topPanel)
-        self.panel.add(scrollPane)
-        self.panel.add(viewerSplitPane)
+        topPanel = JPanel(GridLayout(2, 1))
+        topPanel.add(keywordsPanel)
+        topPanel.add(scrollPane)
 
+
+        self.panel.add(topPanel)
+        self.panel.add(viewerSplitPane)
 
     def updateKeywords(self, event):
         keywords = self.textField.getText().strip()
