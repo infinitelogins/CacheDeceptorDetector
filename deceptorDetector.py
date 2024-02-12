@@ -4,8 +4,8 @@ from burp import ITab
 from burp import IMessageEditorController
 from burp import IContextMenuFactory
 
-from javax.swing import JPanel, JLabel, JTextField, JButton, JTable, JScrollPane, JMenuItem, JSplitPane, BoxLayout
-from javax.swing.table import DefaultTableModel, TableRowSorter
+from javax.swing import event, JPanel, JLabel, JTextField, JButton, JTable, JScrollPane, JMenuItem, JSplitPane, BoxLayout, JCheckBox, DefaultCellEditor
+from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer, TableRowSorter
 from java.awt.event import MouseAdapter, MouseEvent
 from java.io import PrintWriter
 import java.util.ArrayList
@@ -14,7 +14,25 @@ from java.util import Date, Comparator
 from javax.swing import JTextArea
 from javax.swing import SwingUtilities
 from java.awt import BorderLayout, GridLayout, FlowLayout
+from java.lang import Boolean
 
+class CheckBoxRenderer(DefaultTableCellRenderer):
+    def __init__(self):
+        self.checkbox = JCheckBox()
+        self.checkbox.setHorizontalAlignment(JCheckBox.CENTER)
+
+    def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
+        self.checkbox.setSelected(value)
+        return self.checkbox
+
+class LogTableModel(DefaultTableModel):
+    def __init__(self, columnNames, rows):
+        DefaultTableModel.__init__(self, columnNames, rows)
+
+    def isCellEditable(self, row, column):
+        if column == 0:
+            return True
+        return False
 
 class IntegerComparator(Comparator):
     def compare(self, o1, o2):
@@ -72,8 +90,8 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         keywordsScrollPane.setPreferredSize(java.awt.Dimension(700, 50))
 
         # Table setup
-        columnNames = ["Tested", "Timestamp", "ID", "Method", "URL", "Status", "Length", "Trigger Keyword"]
-        self.model = DefaultTableModel(columnNames, 0)
+        responseColumnNames = ["Tested", "Timestamp", "ID", "Method", "URL", "Status", "Length", "Trigger Keyword"]
+        self.model = LogTableModel(responseColumnNames, 0)
         self.table = JTable(self.model)
         sorter = TableRowSorter(self.model)
         sorter.setComparator(1, IntegerComparator())
@@ -81,17 +99,33 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self.table.addMouseListener(TableClickListener(self))
         scrollPane = JScrollPane(self.table)
         scrollPane.setPreferredSize(java.awt.Dimension(700, 200))
+        
+        # Create a checkbox and use it as a cell renderer and editor for the first column
+        checkbox = JCheckBox()
+        checkbox.setHorizontalAlignment(JCheckBox.LEFT)
+        renderer = DefaultTableCellRenderer()
+        # Create a checkbox renderer and use it for the first column
+        renderer = CheckBoxRenderer()
+        self.table.getColumnModel().getColumn(0).setCellRenderer(renderer)
+
+        # Create a checkbox editor and use it for the first column
+        editor = DefaultCellEditor(JCheckBox())
+        self.table.getColumnModel().getColumn(0).setCellEditor(editor)
+
+        columnWidths = [10, 40, 20, 20, 700, 20, 20, 400]
+        for i, width in enumerate(columnWidths):
+            self.table.getColumnModel().getColumn(i).setPreferredWidth(width)
 
         # Other UI components
         customKeyLabel = JLabel("Enter custom keywords (comma-separated, prefix with '-' to remove):")
         self.textField = JTextField(20)
         updateButton = JButton('Update', actionPerformed=self.updateKeywords)
-        clearButton = JButton('Clear', actionPerformed=self.clearTable)
-        markAsTestedButton = JButton('Mark as Tested', actionPerformed=self.onMarkAsTested)
+        clearButton = JButton('Clear Tested', actionPerformed=self.clearTable)
+        #markAsTestedButton = JButton('Mark as Tested', actionPerformed=self.onMarkAsTested)
         buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
         buttonPanel.add(updateButton)
         buttonPanel.add(clearButton)
-        buttonPanel.add(markAsTestedButton)
+        #buttonPanel.add(markAsTestedButton)
     
         # Request/Response Viewer
         self.requestViewer = self._callbacks.createMessageEditor(self, False)
@@ -126,7 +160,6 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         topPanel.add(keywordsPanel)
         topPanel.add(scrollPane)
 
-
         self.panel.add(topPanel)
         self.panel.add(viewerSplitPane)
 
@@ -155,7 +188,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         new_responses = []
         for i in range(self.model.getRowCount() - 1, -1, -1):
             is_tested = self.model.getValueAt(i, 0)
-            if not is_tested:
+            if is_tested:
                 self.model.removeRow(i)
             else:
                 new_responses.append(self._responses[i])
@@ -236,6 +269,11 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         # Logic to mark a request as tested
         requestInfo = self._helpers.analyzeRequest(messageInfo)
         self.testedRequests.add((str(requestInfo.getUrl()), requestInfo.getMethod()))
+        url = messageInfo.getUrl().toString()
+
+        for i in range(self.model.getRowCount()):
+            if self.model.getValueAt(i, 4) == url:
+                self.model.setValueAt(True, i, 0)
 
     def sendToRepeater(self, invocation):
         selectedRow = self.table.getSelectedRow()
@@ -252,8 +290,13 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         selectedRow = self.table.getSelectedRow()
         if selectedRow != -1:
             self.model.setValueAt(True, selectedRow, 0)  # Set the 'Tested' column to True
-            requestInfo = self._helpers.analyzeRequest(self._responses[selectedRow])
+            messageInfo = self._responses[selectedRow]
+            requestInfo = self._helpers.analyzeRequest(messageInfo)
             self.testedRequests.add((str(requestInfo.getUrl()), requestInfo.getMethod()))
+            url = str(messageInfo.getUrl())
+            for i in range(self.model.getRowCount()):
+                if self.model.getValueAt(i, 4) == url:
+                    self.model.setValueAt(True, i, 0)
 
     def getHttpService(self):
         return self.currentlyDisplayedItem.getHttpService()
@@ -272,6 +315,15 @@ class TableClickListener(MouseAdapter):
     def __init__(self, extender):
         self._extender = extender
 
+    def tableChanged(self, evt):
+        if evt.getColumn() == 0:
+            row = evt.getFirstRow()
+            modelRow = self._extender.table.convertRowIndexToModel(row)
+            if modelRow < len(self._extender._responses):
+                messageInfo = self._extender._responses[modelRow]
+                self.self.markAsTested(messageInfo)
+            else:
+                self._extender._stdout.println("Error: Row index out of range")
     def mouseClicked(self, evt):
         viewRow = self._extender.table.rowAtPoint(evt.getPoint())
         if viewRow != -1:
