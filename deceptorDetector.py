@@ -4,17 +4,14 @@ from burp import ITab
 from burp import IMessageEditorController
 from burp import IContextMenuFactory
 
-from javax.swing import event, JPanel, JLabel, JTextField, JButton, JTable, JScrollPane, JMenuItem, JSplitPane, BoxLayout, JCheckBox, DefaultCellEditor
+from javax.swing import JTextArea, JPopupMenu, JPanel, JLabel, JTextField, JButton, JTable, JScrollPane, JMenuItem, JSplitPane, BoxLayout, JCheckBox, DefaultCellEditor
 from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer, TableRowSorter
 from java.awt.event import MouseAdapter, MouseEvent
 from java.io import PrintWriter
 import java.util.ArrayList
 from java.text import SimpleDateFormat
 from java.util import Date, Comparator
-from javax.swing import JTextArea
-from javax.swing import SwingUtilities
-from java.awt import BorderLayout, GridLayout, FlowLayout
-from java.lang import Boolean
+from java.awt import GridLayout, FlowLayout
 
 class CheckBoxRenderer(DefaultTableCellRenderer):
     def __init__(self):
@@ -121,11 +118,9 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self.textField = JTextField(20)
         updateButton = JButton('Update', actionPerformed=self.updateKeywords)
         clearButton = JButton('Clear Tested', actionPerformed=self.clearTable)
-        #markAsTestedButton = JButton('Mark as Tested', actionPerformed=self.onMarkAsTested)
         buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
         buttonPanel.add(updateButton)
         buttonPanel.add(clearButton)
-        #buttonPanel.add(markAsTestedButton)
     
         # Request/Response Viewer
         self.requestViewer = self._callbacks.createMessageEditor(self, False)
@@ -184,6 +179,14 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
     def displayKeywordList(self):
         self.keywordsTextArea.setText(", ".join(self._customKeywords))
 
+    def markDuplicates(self, requestIdentifier, tested=True):
+        for i in range(self.table.getRowCount()):
+            url = self.table.getValueAt(i, 4)  # Get the URL from column 4
+            method = self.table.getValueAt(i, 3)  # Get the method from column 3
+            if url == requestIdentifier[0] and method == requestIdentifier[1]:
+                self.table.setValueAt(tested, i, 0)  # Mark the row as 'Tested'
+                self._stdout.println("Updating duplicate request...")
+
     def clearTable(self, event):
         new_responses = []
         for i in range(self.model.getRowCount() - 1, -1, -1):
@@ -193,7 +196,6 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
             else:
                 new_responses.append(self._responses[i])
         self._responses = new_responses[::-1]  # Reverse the list to maintain order
-
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         # Check if the message is a response and in scope
@@ -205,24 +207,13 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
             self._stdout.println("Processing request: URL = {}, Method = {}".format(requestIdentifier[0], requestIdentifier[1]))
 
             # Check if the request is already tested
-            if requestIdentifier not in self.testedRequests:
-                self._stdout.println("Request not tested, analyzing response...")
-                self.analyzeResponse(messageInfo)
-            else:
-                self._stdout.println("Request already tested, skipping...")
+            for request in self.testedRequests:
+                if requestIdentifier[0] == request[0] and requestIdentifier[1] == request[1]:
+                    self._stdout.println("ALERT: Request already tested, skipping...")
+                    return
 
-
-    def onCheckboxChanged(self, event):
-        # Logic to update self.testedRequests based on checkbox state
-        row = event.getFirstRow()
-        tested = self.model.getValueAt(row, 0)  # Get checkbox state
-        url = self.model.getValueAt(row, 4)     # URL
-        method = self.model.getValueAt(row, 3)  # Method
-        requestIdentifier = (url, method)
-        if tested:
-            self.testedRequests.add(requestIdentifier)
-        else:
-            self.testedRequests.remove(requestIdentifier)
+            self._stdout.println("Request not tested, analyzing response...")
+            self.analyzeResponse(messageInfo)
 
     def analyzeResponse(self, messageInfo):
         response = messageInfo.getResponse()
@@ -252,51 +243,40 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         else:
             self._stdout.println("Response doesn't meet criteria. Not added to table.")
 
-
     def getTabCaption(self):
         return "Deceptor Detector"
 
     def getUiComponent(self):
         return self.panel
 
-    def createMenuItems(self, invocation):
+    def createMenuItems(self):
         menu = java.util.ArrayList()
-        menu.add(JMenuItem("Send to Repeater", actionPerformed=lambda x: self.sendToRepeater(invocation)))
-        menu.add(JMenuItem("Mark as Tested", actionPerformed=lambda x: self.markAsTested(invocation.getSelectedMessages()[0])))
+        menu.add(JMenuItem("Send to Repeater", actionPerformed=lambda x: self.sendToRepeater()))
+        menu.add(JMenuItem("Mark as Tested", actionPerformed=lambda x: self.markAsTested()))
         return menu
 
     def markAsTested(self, messageInfo):
         # Logic to mark a request as tested
-        requestInfo = self._helpers.analyzeRequest(messageInfo)
-        self.testedRequests.add((str(requestInfo.getUrl()), requestInfo.getMethod()))
-        url = messageInfo.getUrl().toString()
-
-        for i in range(self.model.getRowCount()):
-            if self.model.getValueAt(i, 4) == url:
-                self.model.setValueAt(True, i, 0)
-
-    def sendToRepeater(self, invocation):
         selectedRow = self.table.getSelectedRow()
         if selectedRow == -1:
             return
+        self.table.setValueAt(True, selectedRow, 0)
+        messageInfo = self._responses[selectedRow]
+        requestInfo = self._helpers.analyzeRequest(messageInfo)
+        requestIdentifier = (str(requestInfo.getUrl()), requestInfo.getMethod())
+        self.testedRequests.add(requestIdentifier)
 
-        messageInfo = self._responses.get(selectedRow)
+        self.markDuplicates(requestIdentifier)
+
+    def sendToRepeater(self):
+        selectedRow = self.table.getSelectedRow()
+        if selectedRow == -1:
+            return
+        messageInfo = self._responses[selectedRow]
         httpService = messageInfo.getHttpService()
         request = messageInfo.getRequest()
 
         self._callbacks.sendToRepeater(httpService.getHost(), httpService.getPort(), httpService.getProtocol() == "https", request, "Deceptor Detector")
-
-    def onMarkAsTested(self, event):
-        selectedRow = self.table.getSelectedRow()
-        if selectedRow != -1:
-            self.model.setValueAt(True, selectedRow, 0)  # Set the 'Tested' column to True
-            messageInfo = self._responses[selectedRow]
-            requestInfo = self._helpers.analyzeRequest(messageInfo)
-            self.testedRequests.add((str(requestInfo.getUrl()), requestInfo.getMethod()))
-            url = str(messageInfo.getUrl())
-            for i in range(self.model.getRowCount()):
-                if self.model.getValueAt(i, 4) == url:
-                    self.model.setValueAt(True, i, 0)
 
     def getHttpService(self):
         return self.currentlyDisplayedItem.getHttpService()
@@ -321,15 +301,34 @@ class TableClickListener(MouseAdapter):
             modelRow = self._extender.table.convertRowIndexToModel(row)
             if modelRow < len(self._extender._responses):
                 messageInfo = self._extender._responses[modelRow]
-                self.self.markAsTested(messageInfo)
+                self.markAsTested(messageInfo)
             else:
                 self._extender._stdout.println("Error: Row index out of range")
+    
     def mouseClicked(self, evt):
-        viewRow = self._extender.table.rowAtPoint(evt.getPoint())
-        if viewRow != -1:
-            modelRow = self._extender.table.convertRowIndexToModel(viewRow)
-            if modelRow < len(self._extender._responses):
-                messageInfo = self._extender._responses[modelRow]
-                self._extender.setMessageViewers(messageInfo.getRequest(), messageInfo.getResponse())
-            else:
-                self._extender._stdout.println("Error: Row index out of range")
+        if evt.getButton() == MouseEvent.BUTTON3:  # Right button clicked
+            if self._extender.table.rowAtPoint(evt.getPoint()) != -1:  # Clicked on a row
+                # Select the row where right-click occurred
+                self._extender.table.setRowSelectionInterval(self._extender.table.rowAtPoint(evt.getPoint()), self._extender.table.rowAtPoint(evt.getPoint()))
+                viewRow = self._extender.table.rowAtPoint(evt.getPoint())
+                if viewRow != -1:
+                    modelRow = self._extender.table.convertRowIndexToModel(viewRow)
+                    if modelRow < len(self._extender._responses):
+                        messageInfo = self._extender._responses[modelRow]
+                        # Create menu
+                        menu = self._extender.createMenuItems(messageInfo)
+                        # Create popup menu
+                        popup = JPopupMenu()
+                        for item in menu:
+                            popup.add(item)
+                        # Show popup menu
+                        popup.show(self._extender.table, evt.getX(), evt.getY())
+        else:
+            viewRow = self._extender.table.rowAtPoint(evt.getPoint())
+            if viewRow != -1:
+                modelRow = self._extender.table.convertRowIndexToModel(viewRow)
+                if modelRow < len(self._extender._responses):
+                    messageInfo = self._extender._responses[modelRow]
+                    self._extender.setMessageViewers(messageInfo.getRequest(), messageInfo.getResponse())
+                else:
+                    self._extender._stdout.println("Error: Row index out of range")
