@@ -11,7 +11,19 @@ from java.io import PrintWriter
 import java.util.ArrayList
 from java.text import SimpleDateFormat
 from java.util import Date, Comparator
-from java.awt import GridLayout, FlowLayout
+from java.awt import GridLayout, BorderLayout, FlowLayout, Color
+
+class PlaceholderTextField(JTextField):
+    def __init__(self, placeholder, *args):
+        super(PlaceholderTextField, self).__init__(*args)
+        self.placeholder = placeholder
+
+    def paint(self, g):
+        super(PlaceholderTextField, self).paint(g)
+        if self.getText().strip() == "":
+            g.setColor(Color.GRAY)
+            g.drawString(self.placeholder, self.getInsets().left, self.getHeight() / 2 + self.getFont().getSize() / 2 - 1)
+
 
 class CheckBoxRenderer(DefaultTableCellRenderer):
     def __init__(self):
@@ -69,24 +81,24 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
 
         # Create UI components
         self.initUI()
-        self.displayKeywordList()  # Display the combined list of keywords
+        #self.displayKeywordList()  # Display the combined list of keywords
         self._callbacks.addSuiteTab(self)
 
 
     def initUI(self):
         self.panel = JPanel(GridLayout(2, 1))
 
-        # JTextArea for keywords
+        #JTable for keywords
         keywordsTitleLabel = JLabel("Keywords being searched:")
-        self.keywordsTextArea = JTextArea()
-        self.keywordsTextArea.setLineWrap(True)
-        self.keywordsTextArea.setWrapStyleWord(True)
-        self.keywordsTextArea.setEditable(False)
-        self.keywordsTextArea.setRows(2)
-        keywordsScrollPane = JScrollPane(self.keywordsTextArea)
+        keywordsColumnNames = ["Keywords"]
+        self.keywordsModel = DefaultTableModel(keywordsColumnNames, 0)
+        self.keywordsTable = JTable(self.keywordsModel)
+        for keyword in self.sensitiveDataKeywords:
+            self.keywordsModel.addRow([keyword])
+        keywordsScrollPane = JScrollPane(self.keywordsTable)
         keywordsScrollPane.setPreferredSize(java.awt.Dimension(700, 50))
 
-        # Table setup
+        # Response Table setup
         responseColumnNames = ["Tested", "Timestamp", "ID", "Method", "URL", "Status", "Length", "Trigger Keyword"]
         self.model = LogTableModel(responseColumnNames, 0)
         self.table = JTable(self.model)
@@ -113,15 +125,30 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         for i, width in enumerate(columnWidths):
             self.table.getColumnModel().getColumn(i).setPreferredWidth(width)
 
-        # Other UI components
-        customKeyLabel = JLabel("Enter custom keywords (comma-separated, prefix with '-' to remove):")
-        self.textField = JTextField(20)
+        # Custom keywords input
+        placeholderText = "Enter custom keywords (comma-separated, prefix with '-' to remove):"
+        self.customKeyTextField = PlaceholderTextField(placeholderText, 20)
         updateButton = JButton('Update', actionPerformed=self.updateKeywords)
-        clearButton = JButton('Clear Tested', actionPerformed=self.clearTable)
+        removeButton = JButton('Remove Tested', actionPerformed=self.clearTable)
+        clearButton = JButton('Clear Tested List', actionPerformed=self.clearTestedList)
         buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
-        buttonPanel.add(updateButton)
+        buttonPanel.add(removeButton)
         buttonPanel.add(clearButton)
+        customKeyPanel = JPanel()
+        customKeyPanel.setLayout(BoxLayout(customKeyPanel, BoxLayout.X_AXIS))
+        customKeyPanel.add(self.customKeyTextField)
+        customKeyPanel.add(updateButton)
     
+        # JTable for Method/URL
+        testedTitleLabel = JLabel("Tested Method/URL:")
+        testedColumnNames = ["URL", "Method"]
+        self.testedModel = DefaultTableModel(testedColumnNames, 0)
+        self.testedTable = JTable(self.testedModel)
+        testedScrollPane = JScrollPane(self.testedTable)
+        testedScrollPane.setPreferredSize(java.awt.Dimension(700, 180))
+        testedTableColumnWidths = [680, 20]
+        for i, width in enumerate(testedTableColumnWidths):
+            self.testedTable.getColumnModel().getColumn(i).setPreferredWidth(width)
         # Request/Response Viewer
         self.requestViewer = self._callbacks.createMessageEditor(self, False)
         self.responseViewer = self._callbacks.createMessageEditor(self, False)
@@ -135,20 +162,19 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
 
         # Add the split pane to the parent container
         viewerSplitPane.setPreferredSize(java.awt.Dimension(700, 300))
-        keywordsPanel = JPanel(GridLayout(1, 2))
-        keywordsLeftPanel = JPanel()
-        keywordsLeftPanel.setLayout(BoxLayout(keywordsLeftPanel, BoxLayout.Y_AXIS))
-
-        keywordsLeftPanel.add(keywordsTitleLabel)
-        keywordsLeftPanel.add(keywordsScrollPane)
+        keywordsPanel = JPanel(BorderLayout())
+        keywordsLeftPanel = JPanel(BorderLayout())
+        keywordsLeftPanel.add(keywordsTitleLabel, BorderLayout.PAGE_START)
+        keywordsLeftPanel.add(keywordsScrollPane, BorderLayout.CENTER)
+        keywordsLeftPanel.add(customKeyPanel, BorderLayout.PAGE_END)
         keywordsRightPanel = JPanel()
         keywordsRightPanel.setLayout(BoxLayout(keywordsRightPanel, BoxLayout.Y_AXIS))
 
-        keywordsRightPanel.add(customKeyLabel)
-        keywordsRightPanel.add(self.textField)
+        keywordsRightPanel.add(testedTitleLabel)
+        keywordsRightPanel.add(testedScrollPane)
         keywordsRightPanel.add(buttonPanel)
-        keywordsPanel.add(keywordsLeftPanel)
-        keywordsPanel.add(keywordsRightPanel)
+        keywordsPanel.add(keywordsLeftPanel, BorderLayout.WEST)
+        keywordsPanel.add(keywordsRightPanel, BorderLayout.CENTER)
 
         # Adding components to the panel
         topPanel = JPanel(GridLayout(2, 1))
@@ -157,27 +183,56 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
 
         self.panel.add(topPanel)
         self.panel.add(viewerSplitPane)
+        self.table.getModel().addTableModelListener(self.updateTestedTable)
+
+    def updateTestedTable(self, event):
+    # Get the row and column that changed
+        row = event.getFirstRow()
+        column = event.getColumn()
+
+        # If the tested checkmark was clicked
+        if column == 0:
+            # Get the Method/URL from the row
+            method = self.table.getValueAt(row, 3)
+            url = self.table.getValueAt(row, 4)
+
+            # If the checkmark is checked, add the Method/URL to the tested table
+            if self.table.getValueAt(row, 0):
+                for i in range(self.testedModel.getRowCount()):
+                    if self.testedModel.getValueAt(i, 0) == url and self.testedModel.getValueAt(i, 1) == method:
+                        return
+                self.testedModel.addRow([url, method])
+                self.testedRequests.add((url, method))
+            # Otherwise, remove the Method/URL from the tested table
+            else:
+                for i in range(self.testedModel.getRowCount()):
+                    if self.testedModel.getValueAt(i, 0) == url and self.testedModel.getValueAt(i, 1) == method:
+                        self.testedModel.removeRow(i)
+                        self.testedRequests.remove((url, method))
+                        break
 
     def updateKeywords(self, event):
-        keywords = self.textField.getText().strip()
-        if keywords:
-            if keywords.startswith('-'):
-                # Removal of keyword
-                keywordToRemove = keywords[1:].strip()
-                if keywordToRemove in self._customKeywords:
-                    self._customKeywords.remove(keywordToRemove)
-                else:
-                    self._stdout.println("Keyword not in list: " + keywordToRemove)
-            else:
-                # Addition of new keywords
-                new_keywords = [keyword.strip() for keyword in keywords.split(',') if keyword.strip()]
-                for keyword in new_keywords:
-                    if keyword not in self._customKeywords:
-                        self._customKeywords.append(keyword)
-        self.displayKeywordList()  # Update the displayed keyword list
+    # Get the custom keywords from the text field
+        customKeywords = self.customKeyTextField.getText().split(',')
 
-    def displayKeywordList(self):
-        self.keywordsTextArea.setText(", ".join(self._customKeywords))
+        for keyword in customKeywords:
+            # If the keyword starts with '-', remove it from the table and the sensitiveDataKeywords list
+            keyword = keyword.strip()
+            if keyword.startswith('-'):
+                keyword = keyword[1:]
+                self._customKeywords.remove(keyword)
+                for i in range(self.keywordsModel.getRowCount()):
+                    if self.keywordsModel.getValueAt(i, 0) == keyword:
+                        self.keywordsModel.removeRow(i)
+                        self._stdout.println("Keyword in list: " + keyword)
+                        break
+            # Otherwise, add the keyword to the table and the sensitiveDataKeywords list
+            else:
+                self._customKeywords.append(keyword)
+                self.keywordsModel.addRow([keyword])
+
+            # Clear the text field
+        self.textField.setText('')  
 
     def markDuplicates(self, requestIdentifier, tested=True):
         for i in range(self.table.getRowCount()):
@@ -196,6 +251,10 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
             else:
                 new_responses.append(self._responses[i])
         self._responses = new_responses[::-1]  # Reverse the list to maintain order
+
+    def clearTestedList(self, event):
+        self.testedRequests.clear()
+        self._stdout.println("Tested list cleared.")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         # Check if the message is a response and in scope
@@ -222,7 +281,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         responseBody = self._helpers.bytesToString(response)[analyzedResponse.getBodyOffset():]
 
         # Combine built-in keywords with any custom keywords added by the user
-        allKeywords = self.sensitiveDataKeywords + self._customKeywords
+        allKeywords = self._customKeywords
         matchedKeywords = [keyword for keyword in allKeywords if keyword in responseBody]
 
         # Check for required cache-control headers
@@ -230,13 +289,16 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         isCacheControlPresent = any(any(ch in header for ch in cacheHeaders) for header in headers)
 
         if matchedKeywords and not isCacheControlPresent:
+            tested = False
             httpService = messageInfo.getHttpService()
             requestInfo = self._helpers.analyzeRequest(messageInfo.getRequest())
-            url = messageInfo.getUrl().toString()  # Directly get the URL from messageInfo
-
+            url = str(messageInfo.getUrl())  # Directly get the URL from messageInfo
+            requestIdentifier = (url, requestInfo.getMethod())
             timestamp = SimpleDateFormat("HH:mm:ss").format(Date())
             responseId = len(self._responses) + 1
-            row_data = [False, timestamp, responseId, requestInfo.getMethod(), url, analyzedResponse.getStatusCode(), len(responseBody), ", ".join(matchedKeywords)]
+            if requestIdentifier in self.testedRequests:
+                return
+            row_data = [tested, timestamp, responseId, requestInfo.getMethod(), url, analyzedResponse.getStatusCode(), len(responseBody), ", ".join(matchedKeywords)]
             self.model.addRow(row_data)
             self._responses.append(messageInfo)
             self._stdout.println("Sensitive response without proper cache control added to table.")
