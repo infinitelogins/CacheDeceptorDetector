@@ -48,6 +48,10 @@ class IntegerComparator(Comparator):
         return int(o1) - int(o2)
 
 class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController, IContextMenuFactory):
+    def __init__(self):
+        # initialize the ID counter for the responses table.
+        self.responseId = 0
+
     def registerExtenderCallbacks(self, callbacks):
         self._callbacks = callbacks
         self._helpers = callbacks.getHelpers()
@@ -254,6 +258,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
 
     def clearTestedList(self, event):
         self.testedRequests.clear()
+        self.testedModel.setRowCount(0)
         self._stdout.println("Tested list cleared.")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
@@ -295,10 +300,10 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
             url = str(messageInfo.getUrl())  # Directly get the URL from messageInfo
             requestIdentifier = (url, requestInfo.getMethod())
             timestamp = SimpleDateFormat("HH:mm:ss").format(Date())
-            responseId = len(self._responses) + 1
+            self.responseId += 1
             if requestIdentifier in self.testedRequests:
                 return
-            row_data = [tested, timestamp, responseId, requestInfo.getMethod(), url, analyzedResponse.getStatusCode(), len(responseBody), ", ".join(matchedKeywords)]
+            row_data = [tested, timestamp, self.responseId, requestInfo.getMethod(), url, analyzedResponse.getStatusCode(), len(responseBody), ", ".join(matchedKeywords)]
             self.model.addRow(row_data)
             self._responses.append(messageInfo)
             self._stdout.println("Sensitive response without proper cache control added to table.")
