@@ -236,7 +236,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                 self.keywordsModel.addRow([keyword])
 
             # Clear the text field
-        self.textField.setText('')  
+        self.customKeyTextField.setText('')  
 
     def markDuplicates(self, requestIdentifier, tested=True):
         for i in range(self.table.getRowCount()):
@@ -373,7 +373,7 @@ class TableClickListener(MouseAdapter):
                 self._extender._stdout.println("Error: Row index out of range")
     
     def mouseClicked(self, evt):
-        if evt.getButton() == MouseEvent.BUTTON3:  # Right button clicked
+        if (evt.getButton() == MouseEvent.BUTTON3):  # Right button clicked
             if self._extender.table.rowAtPoint(evt.getPoint()) != -1:  # Clicked on a row
                 # Select the row where right-click occurred
                 self._extender.table.setRowSelectionInterval(self._extender.table.rowAtPoint(evt.getPoint()), self._extender.table.rowAtPoint(evt.getPoint()))
@@ -383,13 +383,17 @@ class TableClickListener(MouseAdapter):
                     if modelRow < len(self._extender._responses):
                         messageInfo = self._extender._responses[modelRow]
                         # Create menu
-                        menu = self._extender.createMenuItems(messageInfo)
+                        menu = self._extender.createMenuItems()
                         # Create popup menu
                         popup = JPopupMenu()
                         for item in menu:
                             popup.add(item)
                         # Show popup menu
                         popup.show(self._extender.table, evt.getX(), evt.getY())
+                    else:
+                        self._extender._stdout.println("Error: Model row index out of range")
+                else:
+                    self._extender._stdout.println("Error: View row index out of range")
         else:
             viewRow = self._extender.table.rowAtPoint(evt.getPoint())
             if viewRow != -1:
