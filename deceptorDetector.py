@@ -68,7 +68,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
             "session_token", "auth_token", "pin", "security_question",
             "security_answer", "transaction_id", "order_id", "payment_method",
             "billing_address", "shipping_address", "order_total",
-            "tracking_number", "purchase_history", "order_status"
+            "tracking_number", "purchase_history", "order_status", "token"
         ]
 
         # Initialize customKeywords if not already done
